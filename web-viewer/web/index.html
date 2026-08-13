@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MobileCameraAI</title><style>body{font-family:sans-serif;background:#111;color:#fff;margin:0;padding:16px}button{padding:12px;margin:4px;border:0;border-radius:8px}video{width:100%;max-height:75vh;background:#000;border-radius:10px}</style></head>
+<body><h2>MobileCameraAI</h2><div><button onclick="play('1')">دوربین ۱</button><button onclick="play('2')">دوربین ۲</button></div><p id="status">آماده</p><video id="video" autoplay playsinline controls></video><script>
+const video=document.getElementById('video'), status=document.getElementById('status'); let pc=null, selected='1', retry=null;
+async function play(camera){selected=camera; if(pc) pc.close(); status.textContent='در حال اتصال...'; pc=new RTCPeerConnection(); pc.ontrack=e=>video.srcObject=e.streams[0]; pc.onconnectionstatechange=()=>{status.textContent='وضعیت: '+pc.connectionState;if(['failed','disconnected'].includes(pc.connectionState)){clearTimeout(retry);retry=setTimeout(()=>play(selected),1500)}}; pc.addTransceiver('video',{direction:'recvonly'}); const offer=await pc.createOffer(); await pc.setLocalDescription(offer); const r=await fetch('/offer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({camera,type:offer.type,sdp:offer.sdp})}); if(!r.ok){status.textContent='خطا در اتصال';return} const a=await r.json(); await pc.setRemoteDescription(a); status.textContent='🟢 LIVE';}
+play('1');
+</script></body></html>
