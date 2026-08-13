@@ -108,7 +108,7 @@ private fun CameraPlayer(camera: CameraConfig, username: String, password: Strin
         player.playWhenReady = true
     }
 
-    DisposableEffect(camera.name) {
+    DisposableEffect(camera.name, username, password) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 status = when (playbackState) {
@@ -125,17 +125,18 @@ private fun CameraPlayer(camera: CameraConfig, username: String, password: Strin
             }
         }
         player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            player.release()
-        }
+        onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(reconnectRequest, camera.name) {
+    LaunchedEffect(reconnectRequest, camera.name, username, password) {
         if (reconnectRequest > 0 && reconnectEnabled) {
             delay(2000)
             connect()
         }
+    }
+
+    DisposableEffect(camera.name) {
+        onDispose { player.release() }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
