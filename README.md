@@ -14,3 +14,8 @@ The target Uniview IPC6415SR-X5UPW exposes ONVIF on port 8001 and reports three 
 
 ## Development
 The repository is being built incrementally with an engineering test/fix loop.
+
+## CI
+Debug APK is built automatically on pushes to `main` and uploaded as a workflow artifact.
+
+Build trigger: AndroidX configuration verified.
