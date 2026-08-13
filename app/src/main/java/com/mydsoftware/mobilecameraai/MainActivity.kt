@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -61,9 +62,7 @@ private fun MobileCameraAIApp() {
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     cameras.forEachIndexed { index, camera ->
-                        Button(onClick = { selected = index }) {
-                            Text(camera.name)
-                        }
+                        Button(onClick = { selected = index }) { Text(camera.name) }
                     }
                 }
 
@@ -82,39 +81,28 @@ private fun MobileCameraAIApp() {
                     singleLine = true
                 )
 
-                CameraPlayer(
-                    camera = cameras[selected],
-                    username = username,
-                    password = password
-                )
+                CameraPlayer(cameras[selected], username, password)
             }
         }
     }
 }
 
 @Composable
-private fun CameraPlayer(
-    camera: CameraConfig,
-    username: String,
-    password: String
-) {
+private fun CameraPlayer(camera: CameraConfig, username: String, password: String) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var status by remember(camera.name) { mutableStateOf("آماده اتصال") }
-    var retry by remember(camera.name) { mutableStateOf(0) }
+    var reconnectRequest by remember(camera.name) { mutableStateOf(0) }
+    var reconnectEnabled by remember(camera.name) { mutableStateOf(false) }
 
-    val player = remember(camera.name) {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_OFF
-        }
-    }
+    val player = remember(camera.name) { ExoPlayer.Builder(context).build() }
 
     fun connect() {
         if (username.isBlank() || password.isBlank()) {
             status = "نام کاربری و رمز را وارد کنید"
             return
         }
+        reconnectEnabled = true
         status = "در حال اتصال..."
-        retry++
         player.setMediaItem(MediaItem.fromUri(Uri.parse(camera.rtspUri(username, password))))
         player.prepare()
         player.playWhenReady = true
@@ -131,8 +119,9 @@ private fun CameraPlayer(
                 }
             }
 
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            override fun onPlayerError(error: PlaybackException) {
                 status = "🔴 قطع شد — تلاش مجدد..."
+                if (reconnectEnabled) reconnectRequest++
             }
         }
         player.addListener(listener)
@@ -142,9 +131,9 @@ private fun CameraPlayer(
         }
     }
 
-    LaunchedEffect(retry, username, password, camera.name) {
-        if (retry > 0) {
-            delay(1500)
+    LaunchedEffect(reconnectRequest, camera.name) {
+        if (reconnectRequest > 0 && reconnectEnabled) {
+            delay(2000)
             connect()
         }
     }
@@ -161,6 +150,7 @@ private fun CameraPlayer(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { connect() }) { Text("LIVE") }
             Button(onClick = {
+                reconnectEnabled = false
                 player.stop()
                 status = "متوقف"
             }) { Text("STOP") }
