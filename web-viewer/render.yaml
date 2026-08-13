@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: mobilecameraai-web
+    runtime: docker
+    dockerfilePath: ./web-viewer/Dockerfile
+    dockerContext: ./web-viewer
+    healthCheckPath: /
+    envVars:
+      - key: CAMERA1_RTSP
+        sync: false
+      - key: CAMERA2_RTSP
+        sync: false
