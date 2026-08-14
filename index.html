@@ -1,2 +1,21 @@
 <!doctype html>
-<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MobileCameraAI</title><style>body{margin:0;background:#111;color:#fff;font-family:Arial,sans-serif;text-align:center}header{padding:14px;font-size:20px}button{padding:12px 20px;margin:5px;border:0;border-radius:8px;font-size:16px}iframe{width:100%;height:calc(100vh - 125px);border:0;background:#000}</style></head><body><header>MobileCameraAI — Live Camera</header><div><button onclick="openCam(1)">دوربین ۱</button><button onclick="openCam(2)">دوربین ۲</button></div><iframe id="cam" allow="autoplay; fullscreen" allowfullscreen></iframe><script>const urls={1:'http://37.202.152.217:8001',2:'http://37.202.152.217:8002'};function openCam(n){document.getElementById('cam').src=urls[n]}openCam(1);</script></body></html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MobileCameraAI</title>
+<style>body{margin:0;background:#111;color:#fff;font-family:Arial,sans-serif;text-align:center}header{padding:14px;font-size:20px}button{padding:13px 22px;margin:6px;border:0;border-radius:8px;font-size:16px;cursor:pointer}.status{padding:8px;color:#bbb}iframe{width:100%;height:calc(100vh - 145px);border:0;background:#000}</style>
+</head>
+<body>
+<header>MobileCameraAI — Live Camera</header>
+<div><button type="button" id="cam1">دوربین ۱</button><button type="button" id="cam2">دوربین ۲</button></div>
+<div class="status" id="status">دوربین ۱ انتخاب شده</div>
+<iframe id="cam" allow="autoplay; fullscreen" allowfullscreen></iframe>
+<script>
+const urls={1:'http://37.202.152.217:8001',2:'http://37.202.152.217:8002'};
+const frame=document.getElementById('cam'); const status=document.getElementById('status');
+function openCam(n){frame.src='about:blank'; setTimeout(()=>{frame.src=urls[n]},50); status.textContent='دوربین '+n+' انتخاب شده';}
+document.getElementById('cam1').addEventListener('click',()=>openCam(1));
+document.getElementById('cam2').addEventListener('click',()=>openCam(2));
+openCam(1);
+</script>
+</body></html>
