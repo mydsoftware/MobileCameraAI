@@ -3,233 +3,164 @@ import json
 import os
 import pathlib
 import re
-import struct
+import subprocess
 import threading
 import time
 import webbrowser
 
 import websocket
-from flask import Flask, jsonify, render_template_string, send_file
+from flask import Flask, Response, jsonify, render_template_string
 
 HOST = os.getenv("CAMERA_HOST", "37.202.152.217")
 PORT = int(os.getenv("CAMERA_PORT", "8001"))
 PATH = os.getenv("CAMERA_WS_PATH", "/media/flv/video2")
 USERNAME = os.getenv("CAMERA_USERNAME", "admin")
 PASSWORD = os.getenv("CAMERA_PASSWORD", "")
-WEB_LOGIN_HANDLE = os.getenv("WEB_LOGIN_HANDLE", "")
 LOCAL_PORT = int(os.getenv("LOCAL_PORT", "5050"))
-CAPTURE_DIR = pathlib.Path("captures")
-CAPTURE_DIR.mkdir(exist_ok=True)
-
 WS_URL = f"ws://{HOST}:{PORT}{PATH}"
 ORIGIN = f"http://{HOST}:{PORT}"
 
 app = Flask(__name__)
-state = {
-    "connected": False,
-    "authenticated": False,
-    "packets": 0,
-    "bytes": 0,
-    "last_packet": "",
-    "last_error": "",
-    "challenge": "",
-    "analysis": {},
-}
+state = {"connected": False, "authenticated": False, "packets": 0, "bytes": 0,
+         "last_packet": "", "last_error": "", "challenge": "", "flv_bytes": 0,
+         "player": "starting"}
 
-PAGE = """
-<!doctype html><html><head><meta charset="utf-8"><title>Uniview WS Analyzer</title>
-<style>body{font-family:Arial;background:#111;color:#eee;margin:30px}pre{background:#222;padding:15px;border-radius:8px;white-space:pre-wrap}button{padding:10px 16px;margin-right:8px}</style>
-</head><body><h1>Uniview WebSocket Analyzer</h1><p><code>{{ url }}</code></p>
-<pre id="s">loading...</pre><button onclick="location.href='/analyze'">Analyze capture</button><a href="/download-capture" style="color:#8cf"> Download capture</a>
-<script>async function refresh(){const r=await fetch('/status');document.getElementById('s').textContent=JSON.stringify(await r.json(),null,2)}setInterval(refresh,1000);refresh();</script></body></html>
-"""
+clients = []
+clients_lock = threading.Lock()
+
+PAGE = '''<!doctype html><html><head><meta charset="utf-8"><title>Uniview Live</title>
+<style>body{background:#111;color:#eee;font-family:Arial;margin:20px}video{width:min(100%,1280px);background:#000}pre{background:#222;padding:12px}</style></head>
+<body><h2>Uniview WebSocket → FLV</h2><video id="v" controls autoplay muted></video><pre id="s">connecting...</pre>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js"></script>
+<script>
+const v=document.getElementById('v');
+if(mpegts.isSupported()){
+ const p=mpegts.createPlayer({type:'flv',url:'/live.flv',isLive:true,hasAudio:false});
+ p.attachMediaElement(v);p.load();p.play().catch(()=>{});
+}else{document.getElementById('s').textContent='MSE/FLV is not supported by this browser';}
+async function st(){try{let r=await fetch('/status');document.getElementById('s').textContent=JSON.stringify(await r.json(),null,2)}catch(e){}}setInterval(st,1000);st();
+</script></body></html>'''
 
 
-def md5(value):
-    return hashlib.md5(value.encode()).hexdigest()
+def md5(v):
+    return hashlib.md5(v.encode()).hexdigest()
 
 
 def parse_challenge(text):
     m = re.search(r"realm=([^,\s]+).*?nonce=([^,\s]+).*?qop=([^,\s]+)", text)
     if not m:
-        raise RuntimeError(f"Cannot parse Digest challenge: {text}")
+        raise RuntimeError("Digest challenge not found")
     return m.group(1), m.group(2), m.group(3)
 
 
-def make_digest(realm, nonce, qop="auth"):
+def make_digest(realm, nonce, qop):
     uri = WS_URL
     nc = "00000001"
     cnonce = os.urandom(16).hex()
     ha1 = md5(f"{USERNAME}:{realm}:{PASSWORD}")
     ha2 = md5(f"GET:{uri}")
     response = md5(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}")
-    return (
-        'Digest '
-        f'username="{USERNAME}", realm="{realm}", nonce="{nonce}", '
-        'algorithm="MD5", '
-        f'uri="{uri}", response="{response}", qop="{qop}", '
-        f'nc="{nc}", cnonce="{cnonce}"'
-    )
+    return ('Digest ' + f'username="{USERNAME}", realm="{realm}", nonce="{nonce}", '
+            f'algorithm="MD5", uri="{uri}", response="{response}", qop="{qop}", '
+            f'nc="{nc}", cnonce="{cnonce}"')
 
 
-def initial_challenge():
+def get_challenge():
     ws = websocket.create_connection(WS_URL, origin=ORIGIN, timeout=10)
     state["connected"] = True
-    msg = ws.recv()
-    ws.close()
+    msg = ws.recv(); ws.close()
     if isinstance(msg, bytes):
         raise RuntimeError("Binary data before authentication")
     state["challenge"] = msg
     data = json.loads(msg)
     if data.get("errorCode") != 401:
-        raise RuntimeError(f"Unexpected response: {msg}")
-    return parse_challenge(data.get("detail", ""))
+        raise RuntimeError(msg)
+    return parse_challenge(data["detail"])
 
 
-def authenticated_connect(auth_cookie):
-    cookies = [f"Authorization={auth_cookie}"]
-    if WEB_LOGIN_HANDLE:
-        cookies.append(f"WebLoginHandle={WEB_LOGIN_HANDLE}")
-    cookies += ["langInfo_=1", "noShowTip=1"]
-    return websocket.create_connection(
-        WS_URL,
-        origin=ORIGIN,
-        timeout=15,
-        header=[
-            "Pragma: no-cache",
-            "Cache-Control: no-cache",
-            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36",
-            "Cookie: " + "; ".join(cookies),
-        ],
-    )
+def open_authenticated(auth):
+    return websocket.create_connection(WS_URL, origin=ORIGIN, timeout=15, header=[
+        "Pragma: no-cache", "Cache-Control: no-cache",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36",
+        "Cookie: langInfo_=1; noShowTip=1; Authorization=" + auth,
+    ])
 
 
-def find_signatures(data):
-    signatures = {
-        b"FLV": "FLV",
-        b"\x1a\x45\xdf\xa3": "EBML/WebM",
-        b"ftyp": "MP4/fMP4",
-        b"\x00\x00\x00\x01\x67": "H264 SPS",
-        b"\x00\x00\x01\x67": "H264 SPS",
-        b"\x00\x00\x00\x01\x65": "H264 IDR",
-        b"\x00\x00\x01\x65": "H264 IDR",
-        b"\x00\x00\x00\x01\x68": "H264 PPS",
-        b"\x00\x00\x01\x68": "H264 PPS",
-    }
-    out = {}
-    for sig, name in signatures.items():
-        positions = []
-        start = 0
-        while True:
-            p = data.find(sig, start)
-            if p < 0:
-                break
-            positions.append(p)
-            start = p + 1
-            if len(positions) >= 20:
-                break
-        if positions:
-            out[name] = positions
-    return out
+def broadcast(data):
+    dead=[]
+    with clients_lock:
+        for q in clients:
+            try: q.write(data)
+            except Exception: dead.append(q)
+        for q in dead:
+            if q in clients: clients.remove(q)
 
 
-def analyze_capture():
-    files = sorted(CAPTURE_DIR.glob("packet_*.bin"))
-    if not files:
-        return {"error": "No capture packets"}
-    packets = []
-    combined = bytearray()
-    for p in files:
-        b = p.read_bytes()
-        packets.append({"file": p.name, "size": len(b), "first32": b[:32].hex(" "), "last16": b[-16:].hex(" ")})
-        combined.extend(b)
-    result = {
-        "packet_count": len(files),
-        "total_bytes": len(combined),
-        "first_packet": packets[0],
-        "last_packet": packets[-1],
-        "signatures_in_concatenated_payload": find_signatures(bytes(combined)),
-        "first_64_combined": bytes(combined[:64]).hex(" "),
-        "last_64_combined": bytes(combined[-64:]).hex(" "),
-        "size_min": min(x["size"] for x in packets),
-        "size_max": max(x["size"] for x in packets),
-        "size_avg": round(sum(x["size"] for x in packets) / len(packets), 2),
-    }
-    state["analysis"] = result
-    pathlib.Path("capture_analysis.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    return result
-
-
-def capture_loop():
+def stream_loop():
     if not PASSWORD:
-        state["last_error"] = "CAMERA_PASSWORD is not set"
-        return
+        state["last_error"] = "CAMERA_PASSWORD is not set"; return
+    ff = None
     try:
-        realm, nonce, qop = initial_challenge()
-        auth_cookie = make_digest(realm, nonce, qop)
-        ws = authenticated_connect(auth_cookie)
+        realm, nonce, qop = get_challenge()
+        ws = open_authenticated(make_digest(realm, nonce, qop))
         state["authenticated"] = True
-        index = 0
-        while index < 1000:
+        first = True
+        while True:
             packet = ws.recv()
-            if packet is None:
-                raise RuntimeError("WebSocket closed")
+            if packet is None: raise RuntimeError("WebSocket closed")
             if isinstance(packet, str):
                 state["last_error"] = packet
-                if "errorCode" in packet:
-                    break
+                if '"errorCode":401' in packet: raise RuntimeError(packet)
                 continue
-            index += 1
-            state["packets"] = index
-            state["bytes"] += len(packet)
-            state["last_packet"] = f"{len(packet)} bytes"
-            (CAPTURE_DIR / f"packet_{index:06d}.bin").write_bytes(packet)
-            if index % 50 == 0:
-                analyze_capture()
+            state["packets"] += 1; state["bytes"] += len(packet); state["last_packet"] = f"{len(packet)} bytes"
+            # The first binary message is the FLV header. Subsequent websocket messages are FLV continuation bytes.
+            if first:
+                if not packet.startswith(b"FLV"):
+                    raise RuntimeError("First media packet is not FLV")
+                first = False
+                state["player"] = "streaming"
+            broadcast(packet)
         ws.close()
-        analyze_capture()
-    except Exception as exc:
-        state["last_error"] = repr(exc)
+    except Exception as e:
+        state["last_error"] = repr(e); state["player"] = "stopped"
 
 
-@app.get("/")
-def index():
-    return render_template_string(PAGE, url=WS_URL)
+@app.get('/')
+def index(): return render_template_string(PAGE)
 
+@app.get('/status')
+def status(): return jsonify(state)
 
-@app.get("/status")
-def status():
-    return jsonify(state)
-
-
-@app.get("/analyze")
-def analyze():
-    return jsonify(analyze_capture())
-
-
-@app.get("/download-capture")
-def download_capture():
-    path = pathlib.Path("capture.bin")
-    with path.open("wb") as out:
-        for p in sorted(CAPTURE_DIR.glob("packet_*.bin")):
-            out.write(p.read_bytes())
-    return send_file(path, as_attachment=True, download_name="uniview-capture.bin")
+@app.get('/live.flv')
+def live_flv():
+    def gen():
+        class Client:
+            def __init__(self): self.q=[]; self.cv=threading.Condition()
+            def write(self,b):
+                with self.cv: self.q.append(b); self.cv.notify()
+            def close(self):
+                with self.cv: self.q.append(None); self.cv.notify()
+        c=Client()
+        with clients_lock: clients.append(c)
+        try:
+            while True:
+                with c.cv:
+                    while not c.q: c.cv.wait(timeout=15)
+                    if not c.q: continue
+                    b=c.q.pop(0)
+                if b is None: break
+                yield b
+        finally:
+            with clients_lock:
+                if c in clients: clients.remove(c)
+    return Response(gen(), mimetype='video/x-flv', headers={'Cache-Control':'no-cache','Access-Control-Allow-Origin':'*'})
 
 
 def main():
-    print("=" * 70)
-    print("Uniview WebSocket Analyzer")
-    print("=" * 70)
-    print("Endpoint:", WS_URL)
-    print("Capture directory:", CAPTURE_DIR.resolve())
-    if not PASSWORD:
-        print("Set CAMERA_PASSWORD before running.")
-        return
-    threading.Thread(target=capture_loop, daemon=True).start()
-    url = f"http://127.0.0.1:{LOCAL_PORT}/"
-    threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    app.run(host="127.0.0.1", port=LOCAL_PORT, debug=False, threaded=True)
+    print('='*70); print('Uniview WebSocket → live FLV viewer'); print('Endpoint:', WS_URL); print('='*70)
+    threading.Thread(target=stream_loop, daemon=True).start()
+    url=f'http://127.0.0.1:{LOCAL_PORT}/'
+    threading.Timer(1.0, lambda:webbrowser.open(url)).start()
+    app.run(host='127.0.0.1', port=LOCAL_PORT, debug=False, threaded=True)
 
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__': main()
