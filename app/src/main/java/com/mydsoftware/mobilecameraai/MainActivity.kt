@@ -1,5 +1,6 @@
 package com.mydsoftware.mobilecameraai
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -26,12 +27,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.exoplayer.source.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 
 class MainActivity : ComponentActivity() {
@@ -41,9 +42,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Camera 1 was validated previously through ONVIF: RTSP service is on 8554.
+// The camera reports media/video1, media/video2 and media/video3 style URIs.
 private val cameras = listOf(
-    CameraConfig("Camera 1", "37.202.152.217", 8001, "/media"),
-    CameraConfig("Camera 2", "37.202.152.217", 8002, "/media2")
+    CameraConfig("Camera 1", "37.202.152.217", 8554, "/media"),
+    CameraConfig("Camera 2", "37.202.152.217", 8554, "/media2")
 )
 
 @Composable
@@ -51,21 +54,44 @@ private fun MobileCameraAIApp() {
     var username by remember { mutableStateOf("admin") }
     var password by remember { mutableStateOf("") }
     var selectedCamera by remember { mutableIntStateOf(0) }
-    var selectedStream by remember { mutableIntStateOf(2) }
+    var selectedStream by remember { mutableIntStateOf(1) }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.fillMaxSize().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text("MobileCameraAI", style = MaterialTheme.typography.headlineSmall)
-                Text("Uniview WebSocket Live")
+                Text("Uniview RTSP Live")
+
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    cameras.forEachIndexed { i, c -> Button(onClick = { selectedCamera = i }) { Text(c.name) } }
+                    cameras.forEachIndexed { i, c ->
+                        Button(onClick = { selectedCamera = i }) { Text(c.name) }
+                    }
                 }
+
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    (1..3).forEach { s -> Button(onClick = { selectedStream = s }) { Text("Stream $s") } }
+                    (1..3).forEach { s ->
+                        Button(onClick = { selectedStream = s }) { Text("Stream $s") }
+                    }
                 }
-                OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Username") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
                 CameraPlayer(cameras[selectedCamera], selectedStream, username, password)
             }
         }
@@ -74,19 +100,35 @@ private fun MobileCameraAIApp() {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, password: String) {
+private fun CameraPlayer(
+    camera: CameraConfig,
+    stream: Int,
+    username: String,
+    password: String
+) {
     val context = LocalContext.current
     var status by remember(camera.name, stream) { mutableStateOf("آماده اتصال") }
     val player = remember(camera.name, stream) { ExoPlayer.Builder(context).build() }
 
     fun connect() {
-        if (password.isBlank()) { status = "رمز دوربین را وارد کنید"; return }
-        status = "در حال اتصال..."
-        val factory = ProgressiveMediaSource.Factory(
-            { UniviewWsDataSource(camera.host, camera.wsPort, camera.wsPath(stream), username, password) },
-            DefaultExtractorsFactory()
-        )
-        player.setMediaSource(factory.createMediaSource(androidx.media3.common.MediaItem.fromUri("ws://${camera.host}:${camera.wsPort}${camera.wsPath(stream)}")))
+        if (password.isBlank()) {
+            status = "رمز دوربین را وارد کنید"
+            return
+        }
+
+        val user = Uri.encode(username)
+        val pass = Uri.encode(password)
+        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
+
+        status = "در حال اتصال RTSP..."
+        player.stop()
+        player.clearMediaItems()
+
+        val mediaSource = RtspMediaSource.Factory()
+            .setForceUseRtpTcp(true)
+            .createMediaSource(MediaItem.fromUri(rtspUri))
+
+        player.setMediaSource(mediaSource)
         player.prepare()
         player.playWhenReady = true
     }
@@ -101,19 +143,37 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
                     else -> status
                 }
             }
-            override fun onPlayerError(error: PlaybackException) { status = "🔴 خطا: ${error.errorCodeName}" }
+
+            override fun onPlayerError(error: PlaybackException) {
+                status = "🔴 خطا: ${error.errorCodeName}"
+            }
         }
+
         player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text("${camera.name} • ${camera.host}:${camera.wsPort}${camera.wsPath(stream)}")
+        Text("${camera.name} • RTSP ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
-        AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxWidth().height(240.dp))
+
+        AndroidView(
+            factory = { PlayerView(it).apply {
+                this.player = player
+                useController = true
+            } },
+            modifier = Modifier.fillMaxWidth().height(240.dp)
+        )
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { connect() }) { Text("LIVE") }
-            Button(onClick = { player.stop(); status = "متوقف" }) { Text("STOP") }
+            Button(onClick = {
+                player.stop()
+                status = "متوقف"
+            }) { Text("STOP") }
         }
     }
 }
