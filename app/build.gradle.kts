@@ -12,8 +12,8 @@ android {
         applicationId = "com.mydsoftware.mobilecameraai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "3.0.1"
+        versionCode = 5
+        versionName = "4.0.0"
     }
 
     buildFeatures { compose = true }
@@ -33,7 +33,12 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.9.0")
     implementation("androidx.compose.material3:material3:1.3.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.3")
+
+    // ExoPlayer is used only for playback of the local MPEG-TS bridge.
     implementation("androidx.media3:media3-exoplayer:1.8.0")
-    implementation("androidx.media3:media3-exoplayer-rtsp:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
+
+    // Maintained native FFmpegKit. FFmpeg handles the camera's RTSP/HEVC SDP;
+    // ExoPlayer receives the resulting MPEG-TS stream through localhost.
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
 }
