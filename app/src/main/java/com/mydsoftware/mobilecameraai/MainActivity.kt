@@ -1,6 +1,5 @@
 package com.mydsoftware.mobilecameraai
 
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,20 +17,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.PlayerView
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,120 +42,78 @@ class MainActivity : ComponentActivity() {
 }
 
 private val cameras = listOf(
-    CameraConfig("Camera 1", "37.202.152.217", 8001, 8554),
-    CameraConfig("Camera 2", "37.202.152.217", 8002, 8552)
+    CameraConfig("Camera 1", "37.202.152.217", 8001, "/media"),
+    CameraConfig("Camera 2", "37.202.152.217", 8002, "/media2")
 )
 
 @Composable
 private fun MobileCameraAIApp() {
     var username by remember { mutableStateOf("admin") }
     var password by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf(0) }
+    var selectedCamera by remember { mutableIntStateOf(0) }
+    var selectedStream by remember { mutableIntStateOf(2) }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.fillMaxSize().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("MobileCameraAI", style = MaterialTheme.typography.headlineSmall)
-                Text("2-Camera Live Viewer")
-
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    cameras.forEachIndexed { index, camera ->
-                        Button(onClick = { selected = index }) { Text(camera.name) }
-                    }
+                Text("Uniview WebSocket Live")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    cameras.forEachIndexed { i, c -> Button(onClick = { selectedCamera = i }) { Text(c.name) } }
                 }
-
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("Username") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
-                CameraPlayer(cameras[selected], username, password)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (1..3).forEach { s -> Button(onClick = { selectedStream = s }) { Text("Stream $s") } }
+                }
+                OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                CameraPlayer(cameras[selectedCamera], selectedStream, username, password)
             }
         }
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
-private fun CameraPlayer(camera: CameraConfig, username: String, password: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var status by remember(camera.name) { mutableStateOf("آماده اتصال") }
-    var reconnectRequest by remember(camera.name) { mutableStateOf(0) }
-    var reconnectEnabled by remember(camera.name) { mutableStateOf(false) }
-
-    val player = remember(camera.name) { ExoPlayer.Builder(context).build() }
+private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, password: String) {
+    val context = LocalContext.current
+    var status by remember(camera.name, stream) { mutableStateOf("آماده اتصال") }
+    val player = remember(camera.name, stream) { ExoPlayer.Builder(context).build() }
 
     fun connect() {
-        if (username.isBlank() || password.isBlank()) {
-            status = "نام کاربری و رمز را وارد کنید"
-            return
-        }
-        reconnectEnabled = true
+        if (password.isBlank()) { status = "رمز دوربین را وارد کنید"; return }
         status = "در حال اتصال..."
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(camera.rtspUri(username, password))))
+        val factory = ProgressiveMediaSource.Factory(
+            { UniviewWsDataSource(camera.host, camera.wsPort, camera.wsPath(stream), username, password) },
+            DefaultExtractorsFactory()
+        )
+        player.setMediaSource(factory.createMediaSource(androidx.media3.common.MediaItem.fromUri("ws://${camera.host}:${camera.wsPort}${camera.wsPath(stream)}")))
         player.prepare()
         player.playWhenReady = true
     }
 
-    DisposableEffect(camera.name, username, password) {
+    DisposableEffect(camera.name, stream) {
         val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                status = when (playbackState) {
+            override fun onPlaybackStateChanged(state: Int) {
+                status = when (state) {
                     Player.STATE_BUFFERING -> "در حال دریافت تصویر..."
                     Player.STATE_READY -> "🟢 LIVE"
                     Player.STATE_ENDED -> "پخش پایان یافت"
                     else -> status
                 }
             }
-
-            override fun onPlayerError(error: PlaybackException) {
-                status = "🔴 قطع شد — تلاش مجدد..."
-                if (reconnectEnabled) reconnectRequest++
-            }
+            override fun onPlayerError(error: PlaybackException) { status = "🔴 خطا: ${error.errorCodeName}" }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener) }
+        onDispose { player.removeListener(listener); player.release() }
     }
 
-    LaunchedEffect(reconnectRequest, camera.name, username, password) {
-        if (reconnectRequest > 0 && reconnectEnabled) {
-            delay(2000)
-            connect()
-        }
-    }
-
-    DisposableEffect(camera.name) {
-        onDispose { player.release() }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${camera.name}  •  ${camera.host}:${camera.rtspPort}")
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text("${camera.name} • ${camera.host}:${camera.wsPort}${camera.wsPath(stream)}")
         Text(status)
-
-        AndroidView(
-            factory = { PlayerView(it).apply { this.player = player; useController = true } },
-            modifier = Modifier.fillMaxWidth().height(240.dp)
-        )
-
+        AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxWidth().height(240.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { connect() }) { Text("LIVE") }
-            Button(onClick = {
-                reconnectEnabled = false
-                player.stop()
-                status = "متوقف"
-            }) { Text("STOP") }
+            Button(onClick = { player.stop(); status = "متوقف" }) { Text("STOP") }
         }
     }
 }
