@@ -41,6 +41,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
 import java.net.ServerSocket
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,70 +86,81 @@ private fun MobileCameraAIApp() {
 private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, password: String) {
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val executor = remember { Executors.newSingleThreadExecutor() }
     var status by remember(camera.name, stream) { mutableStateOf("آماده اتصال") }
     val player = remember(camera.name, stream) { ExoPlayer.Builder(context).build() }
     var ffmpegSession by remember(camera.name, stream) { mutableStateOf<FFmpegSession?>(null) }
     var server by remember(camera.name, stream) { mutableStateOf<ServerSocket?>(null) }
 
     fun stopBridge() {
-        ffmpegSession?.let { session ->
-            try { FFmpegKit.cancel(session.sessionId) } catch (_: Exception) {}
-        }
+        try { ffmpegSession?.let { FFmpegKit.cancel(it.sessionId) } } catch (e: Exception) { Log.w("MobileCameraAI", "FFmpeg cancel: ${e.message}") }
         ffmpegSession = null
-        player.stop()
-        player.clearMediaItems()
-        try { server?.close() } catch (_: Exception) {}
+        try { player.stop(); player.clearMediaItems() } catch (e: Exception) { Log.w("MobileCameraAI", "Player stop: ${e.message}") }
+        try { server?.close() } catch (e: Exception) { Log.w("MobileCameraAI", "Socket close: ${e.message}") }
         server = null
     }
 
     fun connect() {
-        if (username.isBlank() || password.isBlank()) {
-            status = "نام کاربری و رمز دوربین را وارد کنید"
-            return
-        }
+        try {
+            if (username.isBlank() || password.isBlank()) {
+                status = "نام کاربری و رمز دوربین را وارد کنید"
+                return
+            }
+            stopBridge()
+            status = "در حال راه‌اندازی FFmpeg..."
+            val localServer = ServerSocket(0)
+            server = localServer
+            localServer.soTimeout = 15000
+            val localPort = localServer.localPort
+            val user = Uri.encode(username)
+            val pass = Uri.encode(password)
+            val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
+            val safeLogUri = "rtsp://$user:***@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
+            val outputUri = "tcp://127.0.0.1:$localPort"
+            val command = "-hide_banner -loglevel warning -rtsp_transport tcp -i '$rtspUri' -map 0:v:0 -c:v copy -an -f mpegts '$outputUri'"
 
-        stopBridge()
-        val localServer = try { ServerSocket(0) } catch (e: Exception) {
-            status = "🔴 Local server error: ${e.message}"
-            return
-        }
-        server = localServer
-        val localPort = localServer.localPort
-        val user = Uri.encode(username)
-        val pass = Uri.encode(password)
-        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
-        val safeLogUri = "rtsp://$user:***@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
-        val outputUri = "tcp://127.0.0.1:$localPort"
-
-        val command = "-hide_banner -loglevel warning -rtsp_transport tcp " +
-                "-i '$rtspUri' -map 0:v:0 -c:v copy -an -f mpegts '$outputUri'"
-
-        status = "در حال اتصال با FFmpeg..."
-        Log.i("MobileCameraAI", "FFmpeg input: $safeLogUri")
-
-        ffmpegSession = FFmpegKit.executeAsync(command) { session ->
-            if (!ReturnCode.isSuccess(session.returnCode)) {
-                val detail = session.failStackTrace ?: session.state?.toString() ?: "FFmpeg failed"
-                Log.e("MobileCameraAI", "FFmpeg failed: $detail")
-                mainHandler.post {
-                    if (ffmpegSession?.sessionId == session.sessionId) {
-                        status = "🔴 FFmpeg error: $detail"
+            Log.i("MobileCameraAI", "FFmpeg input: $safeLogUri")
+            status = "در حال اتصال RTSP با FFmpeg..."
+            ffmpegSession = FFmpegKit.executeAsync(command) { completed ->
+                try {
+                    if (!ReturnCode.isSuccess(completed.returnCode)) {
+                        val detail = completed.failStackTrace ?: completed.state?.toString() ?: "FFmpeg failed"
+                        mainHandler.post { status = "🔴 FFmpeg: $detail" }
                     }
+                } catch (e: Exception) {
+                    mainHandler.post { status = "🔴 FFmpeg callback: ${e.message}" }
                 }
             }
-        }
 
-        val mediaSource = ProgressiveMediaSource.Factory(LocalTcpDataSource.Factory(localServer))
-            .createMediaSource(MediaItem.fromUri(outputUri))
-        player.setMediaSource(mediaSource)
-        player.prepare()
-        player.playWhenReady = true
+            executor.execute {
+                try {
+                    val client = localServer.accept()
+                    mainHandler.post {
+                        try {
+                            val mediaSource = ProgressiveMediaSource.Factory(LocalTcpDataSource.Factory(client))
+                                .createMediaSource(MediaItem.fromUri(outputUri))
+                            player.setMediaSource(mediaSource)
+                            player.prepare()
+                            player.playWhenReady = true
+                            status = "در حال دریافت H.265 از FFmpeg..."
+                        } catch (e: Exception) {
+                            status = "🔴 Player setup: ${e.javaClass.simpleName}: ${e.message}"
+                        }
+                    }
+                } catch (e: Exception) {
+                    mainHandler.post { status = "🔴 Local socket: ${e.javaClass.simpleName}: ${e.message}" }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MobileCameraAI", "Connect error", e)
+            status = "🔴 Connection error: ${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
+        }
     }
 
     DisposableEffect(camera.name, stream) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_BUFFERING) status = "در حال دریافت H.265 از FFmpeg..."
+                if (state == Player.STATE_BUFFERING) status = "در حال دریافت تصویر..."
                 if (state == Player.STATE_READY) status = "🟢 LIVE • FFmpeg Native"
                 if (state == Player.STATE_ENDED) status = "پخش پایان یافت"
             }
@@ -163,7 +175,8 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         onDispose {
             player.removeListener(listener)
             stopBridge()
-            player.release()
+            try { executor.shutdownNow() } catch (_: Exception) {}
+            try { player.release() } catch (_: Exception) {}
         }
     }
 
@@ -171,12 +184,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         Text("${camera.name} • ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
         AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).also { view ->
-                    view.player = player
-                    view.useController = true
-                }
-            },
+            factory = { ctx -> PlayerView(ctx).also { it.player = player; it.useController = true } },
             modifier = Modifier.fillMaxWidth().height(240.dp)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
