@@ -62,34 +62,14 @@ private fun MobileCameraAIApp() {
             ) {
                 Text("MobileCameraAI", style = MaterialTheme.typography.headlineSmall)
                 Text("Uniview RTSP Live")
-
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    cameras.forEachIndexed { i, c ->
-                        Button(onClick = { selectedCamera = i }) { Text(c.name) }
-                    }
+                    cameras.forEachIndexed { i, c -> Button(onClick = { selectedCamera = i }) { Text(c.name) } }
                 }
-
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    (1..3).forEach { s ->
-                        Button(onClick = { selectedStream = s }) { Text("Stream $s") }
-                    }
+                    (1..3).forEach { s -> Button(onClick = { selectedStream = s }) { Text("Stream $s") } }
                 }
-
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("Username") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
+                OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 CameraPlayer(cameras[selectedCamera], selectedStream, username, password)
             }
         }
@@ -98,25 +78,23 @@ private fun MobileCameraAIApp() {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun CameraPlayer(
-    camera: CameraConfig,
-    stream: Int,
-    username: String,
-    password: String
-) {
+private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, password: String) {
     val context = LocalContext.current
     var status by remember(camera.name, stream) { mutableStateOf("آماده اتصال") }
     val player = remember(camera.name, stream) { ExoPlayer.Builder(context).build() }
 
     fun connect() {
-        if (password.isBlank()) {
-            status = "رمز دوربین را وارد کنید"
+        if (username.isBlank() || password.isBlank()) {
+            status = "نام کاربری و رمز دوربین را وارد کنید"
             return
         }
 
+        // Keep credentials out of the RTSP URI. Media3 performs RTSP authentication
+        // through the URI's user-info; encode each component exactly once.
         val user = Uri.encode(username)
         val pass = Uri.encode(password)
-        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
+        val path = camera.rtspPath(stream)
+        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}$path"
 
         status = "در حال اتصال RTSP..."
         player.stop()
@@ -141,12 +119,10 @@ private fun CameraPlayer(
                     else -> status
                 }
             }
-
             override fun onPlayerError(error: PlaybackException) {
-                status = "🔴 خطا: ${error.errorCodeName}"
+                status = "🔴 ${error.errorCodeName}: ${error.message ?: "RTSP error"}"
             }
         }
-
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
@@ -157,21 +133,13 @@ private fun CameraPlayer(
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text("${camera.name} • RTSP ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
-
         AndroidView(
-            factory = { PlayerView(it).apply {
-                this.player = player
-                useController = true
-            } },
+            factory = { PlayerView(it).apply { this.player = player; useController = true } },
             modifier = Modifier.fillMaxWidth().height(240.dp)
         )
-
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { connect() }) { Text("LIVE") }
-            Button(onClick = {
-                player.stop()
-                status = "متوقف"
-            }) { Text("STOP") }
+            Button(onClick = { player.stop(); status = "متوقف" }) { Text("STOP") }
         }
     }
 }
