@@ -16,16 +16,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -89,14 +89,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             status = "در حال بررسی RTSP با Python..."
             val py = Python.getInstance()
             val module = py.getModule("rtsp_engine")
-            val result = module.callAttr(
-                "probe",
-                camera.host,
-                camera.rtspPort,
-                camera.rtspPath(stream),
-                username,
-                password
-            )
+            val result = module.callAttr("probe", camera.host, camera.rtspPort, camera.rtspPath(stream), username, password)
             status = result.toString()
         } catch (e: Exception) {
             status = "🔴 Python error: ${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
