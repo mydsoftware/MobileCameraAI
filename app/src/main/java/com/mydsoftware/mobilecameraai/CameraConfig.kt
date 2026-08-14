@@ -3,8 +3,8 @@ package com.mydsoftware.mobilecameraai
 data class CameraConfig(
     val name: String,
     val host: String,
-    val wsPort: Int,
+    val rtspPort: Int,
     val pathPrefix: String
 ) {
-    fun wsPath(stream: Int): String = "$pathPrefix/flv/video$stream"
+    fun rtspPath(stream: Int): String = "$pathPrefix/video$stream"
 }
