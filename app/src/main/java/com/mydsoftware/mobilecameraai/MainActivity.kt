@@ -2,6 +2,8 @@ package com.mydsoftware.mobilecameraai
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,7 +41,6 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegSession
 import com.arthenica.ffmpegkit.ReturnCode
 import java.net.ServerSocket
-import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,9 +84,9 @@ private fun MobileCameraAIApp() {
 @Composable
 private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, password: String) {
     val context = LocalContext.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     var status by remember(camera.name, stream) { mutableStateOf("آماده اتصال") }
     val player = remember(camera.name, stream) { ExoPlayer.Builder(context).build() }
-    val executor = remember { Executors.newSingleThreadExecutor() }
     var ffmpegSession by remember(camera.name, stream) { mutableStateOf<FFmpegSession?>(null) }
     var server by remember(camera.name, stream) { mutableStateOf<ServerSocket?>(null) }
 
@@ -119,8 +120,6 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         val safeLogUri = "rtsp://$user:***@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
         val outputUri = "tcp://127.0.0.1:$localPort"
 
-        // FFmpeg owns the RTSP/SDP negotiation. We remux HEVC into MPEG-TS without
-        // transcoding; ExoPlayer receives a normal progressive MPEG-TS byte stream.
         val command = "-hide_banner -loglevel warning -rtsp_transport tcp " +
                 "-i '$rtspUri' -map 0:v:0 -c:v copy -an -f mpegts '$outputUri'"
 
@@ -131,7 +130,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             if (!ReturnCode.isSuccess(session.returnCode)) {
                 val detail = session.failStackTrace ?: session.state?.toString() ?: "FFmpeg failed"
                 Log.e("MobileCameraAI", "FFmpeg failed: $detail")
-                runOnUiThread {
+                mainHandler.post {
                     if (ffmpegSession?.sessionId == session.sessionId) {
                         status = "🔴 FFmpeg error: $detail"
                     }
@@ -139,10 +138,8 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             }
         }
 
-        val dataSourceFactory = LocalTcpDataSource.Factory(localServer)
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri("tcp://127.0.0.1:$localPort"))
-
+        val mediaSource = ProgressiveMediaSource.Factory(LocalTcpDataSource.Factory(localServer))
+            .createMediaSource(MediaItem.fromUri(outputUri))
         player.setMediaSource(mediaSource)
         player.prepare()
         player.playWhenReady = true
@@ -167,7 +164,6 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             player.removeListener(listener)
             stopBridge()
             player.release()
-            executor.shutdownNow()
         }
     }
 
