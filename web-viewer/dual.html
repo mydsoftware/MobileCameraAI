@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>MobileCameraAI — دو دوربین</title>
+  <title>MobileCameraAI</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -16,13 +16,47 @@
       flex-direction: column;
     }
     header {
-      padding: 12px 14px;
+      padding: 14px;
       text-align: center;
-      font-size: 16px;
+      font-size: 17px;
       font-weight: 600;
       background: #151515;
       border-bottom: 1px solid #222;
     }
+    .screen { display: none; flex: 1; flex-direction: column; min-height: 0; }
+    .screen.active { display: flex; }
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      justify-content: center;
+    }
+    .card {
+      background: #161616;
+      border: 1px solid #2a2a2a;
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .card h2 { font-size: 16px; margin-bottom: 8px; }
+    .card p { font-size: 13px; color: #aaa; line-height: 1.6; margin-bottom: 12px; }
+    .btn {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      background: #2f6fed;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+    }
+    .btn.secondary { background: #2a2a2a; margin-top: 8px; }
+    .btn:active { transform: scale(0.99); }
     .toolbar {
       display: flex;
       gap: 8px;
@@ -30,122 +64,118 @@
       justify-content: center;
       flex-wrap: wrap;
       background: #121212;
+      border-bottom: 1px solid #222;
     }
-    button {
+    .toolbar button {
       border: 0;
       border-radius: 10px;
       padding: 10px 14px;
       font-size: 14px;
       background: #2a2a2a;
       color: #fff;
-      cursor: pointer;
     }
-    button.active { background: #2f6fed; }
-    button:active { transform: scale(0.98); }
-    .grid {
+    .toolbar button.active { background: #2f6fed; }
+    .stage {
       flex: 1;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 8px;
-      padding: 8px;
-      min-height: 0;
-    }
-    @media (min-width: 700px) {
-      .grid.both { grid-template-columns: 1fr 1fr; }
-    }
-    .cam {
       position: relative;
       background: #000;
-      border: 1px solid #222;
-      border-radius: 12px;
-      overflow: hidden;
-      min-height: 42vh;
+      min-height: 50vh;
     }
-    .cam.hidden { display: none; }
-    .label {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      z-index: 2;
-      background: rgba(0,0,0,.65);
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-    }
-    iframe {
+    .stage iframe {
       width: 100%;
       height: 100%;
-      min-height: 42vh;
+      min-height: 60vh;
       border: 0;
-      background: #000;
       display: block;
+      background: #000;
     }
     .hint {
       text-align: center;
       font-size: 12px;
       color: #888;
-      padding: 8px 12px 14px;
+      padding: 10px 14px 14px;
+      line-height: 1.5;
     }
+    .steps { font-size: 13px; color: #bbb; line-height: 1.7; }
+    .steps li { margin-bottom: 6px; }
   </style>
 </head>
 <body>
-  <header>MobileCameraAI — مشاهده دو دوربین</header>
+  <header>MobileCameraAI</header>
 
-  <div class="toolbar">
-    <button id="btnBoth" class="active" onclick="show('both')">هر دو</button>
-    <button id="btn1" onclick="show('1')">دوربین ۱</button>
-    <button id="btn2" onclick="show('2')">دوربین ۲</button>
-    <button onclick="reloadAll()">تازه‌سازی</button>
-  </div>
+  <!-- مرحله ۱: لاگین -->
+  <section id="loginScreen" class="screen active">
+    <div class="panel">
+      <div class="card">
+        <h2>مرحله ۱ — ورود</h2>
+        <p>اول وارد هر دوربین شو. بعد از لاگین، برگرد و لایو را باز کن.</p>
+        <ol class="steps">
+          <li>دکمه ورود دوربین را بزن</li>
+          <li>یوزرنیم و رمز را وارد کن</li>
+          <li>با دکمه برگشت مرورگر برگرد اینجا</li>
+          <li>مرحله ۲ را بزن</li>
+        </ol>
+        <a class="btn" href="http://37.202.152.217:8001">ورود دوربین ۱</a>
+        <a class="btn secondary" href="http://37.202.152.217:8002">ورود دوربین ۲</a>
+      </div>
 
-  <div id="grid" class="grid both">
-    <div class="cam" id="box1">
-      <div class="label">دوربین ۱</div>
-      <iframe id="cam1" src="http://37.202.152.217:8001" allow="autoplay; fullscreen" allowfullscreen></iframe>
+      <div class="card">
+        <h2>مرحله ۲ — مشاهده لایو</h2>
+        <p>بعد از لاگین هر دو دوربین، اینجا را بزن.</p>
+        <button class="btn" onclick="goLive()">نمایش لایو</button>
+        <button class="btn secondary" onclick="openFull(1)">فقط دوربین ۱ (تمام‌صفحه)</button>
+        <button class="btn secondary" onclick="openFull(2)">فقط دوربین ۲ (تمام‌صفحه)</button>
+      </div>
     </div>
-    <div class="cam" id="box2">
-      <div class="label">دوربین ۲</div>
-      <iframe id="cam2" src="http://37.202.152.217:8002" allow="autoplay; fullscreen" allowfullscreen></iframe>
-    </div>
-  </div>
+    <p class="hint">اگر داخل اپ/WebView هستی، تمام‌صفحه معمولاً پایدارتر از iframe است.</p>
+  </section>
 
-  <p class="hint">
-    اگر لاگین خواست، یک‌بار وارد شو. برای نمایش بهتر صفحه را بچرخان (افقی).
-  </p>
+  <!-- مرحله ۲: لایو -->
+  <section id="liveScreen" class="screen">
+    <div class="toolbar">
+      <button id="btn1" class="active" onclick="showCam(1)">دوربین ۱</button>
+      <button id="btn2" onclick="showCam(2)">دوربین ۲</button>
+      <button onclick="reloadCam()">تازه‌سازی</button>
+      <button onclick="goLogin()">بازگشت</button>
+    </div>
+    <div class="stage">
+      <iframe id="viewer" allow="autoplay; fullscreen" allowfullscreen></iframe>
+    </div>
+    <p class="hint">اگر تصویر نیامد: بازگشت → دوباره لاگین → نمایش لایو. یا از دکمه تمام‌صفحه استفاده کن.</p>
+  </section>
 
   <script>
-    const urls = {
+    const URLS = {
       1: 'http://37.202.152.217:8001',
       2: 'http://37.202.152.217:8002'
     };
+    let current = 1;
 
-    function show(mode) {
-      const grid = document.getElementById('grid');
-      const box1 = document.getElementById('box1');
-      const box2 = document.getElementById('box2');
-      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
-
-      if (mode === 'both') {
-        document.getElementById('btnBoth').classList.add('active');
-        grid.classList.add('both');
-        box1.classList.remove('hidden');
-        box2.classList.remove('hidden');
-      } else if (mode === '1') {
-        document.getElementById('btn1').classList.add('active');
-        grid.classList.remove('both');
-        box1.classList.remove('hidden');
-        box2.classList.add('hidden');
-      } else {
-        document.getElementById('btn2').classList.add('active');
-        grid.classList.remove('both');
-        box1.classList.add('hidden');
-        box2.classList.remove('hidden');
-      }
+    function goLive() {
+      document.getElementById('loginScreen').classList.remove('active');
+      document.getElementById('liveScreen').classList.add('active');
+      showCam(1);
     }
 
-    function reloadAll() {
-      document.getElementById('cam1').src = urls[1];
-      document.getElementById('cam2').src = urls[2];
+    function goLogin() {
+      document.getElementById('liveScreen').classList.remove('active');
+      document.getElementById('loginScreen').classList.add('active');
+      document.getElementById('viewer').src = 'about:blank';
+    }
+
+    function showCam(n) {
+      current = n;
+      document.getElementById('btn1').classList.toggle('active', n === 1);
+      document.getElementById('btn2').classList.toggle('active', n === 2);
+      document.getElementById('viewer').src = URLS[n];
+    }
+
+    function reloadCam() {
+      document.getElementById('viewer').src = URLS[current];
+    }
+
+    function openFull(n) {
+      location.href = URLS[n];
     }
   </script>
 </body>
