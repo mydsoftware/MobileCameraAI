@@ -18,32 +18,27 @@ USERNAME = os.getenv("CAMERA_USERNAME", "admin")
 PASSWORD = os.getenv("CAMERA_PASSWORD", "")
 LOCAL_PORT = int(os.getenv("LOCAL_PORT", "5050"))
 
-# Uniview common IPC streams: video1/main, video2/sub, video3/third.
-# media2 is included for dual-lens devices. For NVRs, the RTSP convention is
-# /unicast/c<channel>/s<stream>/live; the WebSocket FLV endpoint must be
-# confirmed by the device, so custom paths are supported in the UI.
 PRESETS = {
-    "Camera 1 / Main": "/media/flv/video1",
-    "Camera 1 / Sub": "/media/flv/video2",
-    "Camera 1 / Third": "/media/flv/video3",
-    "Camera 2 / Main": "/media2/flv/video1",
-    "Camera 2 / Sub": "/media2/flv/video2",
-    "Camera 2 / Third": "/media2/flv/video3",
-    "Camera 3 / Main": "/media3/flv/video1",
-    "Camera 3 / Sub": "/media3/flv/video2",
-    "Camera 3 / Third": "/media3/flv/video3",
+    "Camera 1 / Main": (8001, "/media/flv/video1"),
+    "Camera 1 / Sub": (8001, "/media/flv/video2"),
+    "Camera 1 / Third": (8001, "/media/flv/video3"),
+    "Camera 2 / Main": (8002, "/media2/flv/video1"),
+    "Camera 2 / Sub": (8002, "/media2/flv/video2"),
+    "Camera 2 / Third": (8002, "/media2/flv/video3"),
+    "Camera 3 / Main": (8003, "/media3/flv/video1"),
+    "Camera 3 / Sub": (8003, "/media3/flv/video2"),
+    "Camera 3 / Third": (8003, "/media3/flv/video3"),
 }
+DEFAULT_PORT = int(os.getenv("CAMERA_WS_PORT", str(PORT)))
 DEFAULT_PATH = os.getenv("CAMERA_WS_PATH", "/media/flv/video2")
 
 app = Flask(__name__)
-state = {
-    "connected": False, "authenticated": False, "packets": 0, "bytes": 0,
-    "last_packet": "", "last_error": "", "challenge": "", "flv_bytes": 0,
-    "player": "starting", "video_tags": 0, "keyframes": 0,
-    "audio_tags": 0, "flv_header_ok": False, "stream_clients": 0,
-    "ffmpeg": "starting", "decoded_frames": 0,
-    "path": DEFAULT_PATH, "url": "",
-}
+state = {"connected": False, "authenticated": False, "packets": 0, "bytes": 0,
+         "last_packet": "", "last_error": "", "challenge": "", "flv_bytes": 0,
+         "player": "starting", "video_tags": 0, "keyframes": 0,
+         "audio_tags": 0, "flv_header_ok": False, "stream_clients": 0,
+         "ffmpeg": "starting", "decoded_frames": 0,
+         "path": DEFAULT_PATH, "port": DEFAULT_PORT, "url": ""}
 
 clients = []
 clients_lock = threading.Lock()
@@ -63,13 +58,13 @@ body{background:#111;color:#eee;font-family:Arial;margin:20px}h2{margin-bottom:1
 .controls{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.controls select,.controls input,.controls button{padding:9px;background:#222;color:#eee;border:1px solid #555;border-radius:5px}
 img{width:min(100%,1280px);background:#000;display:block;min-height:240px;object-fit:contain}pre{background:#222;padding:12px;border-radius:6px;white-space:pre-wrap}
 </style></head><body><h2>Uniview Multi-Camera Live</h2>
-<div class="controls"><select id="preset"></select><input id="path" size="35" placeholder="/media/flv/video2"><button onclick="connect()">Connect</button></div>
+<div class="controls"><select id="preset"></select><input id="port" type="number" value="8001" min="1" max="65535"><input id="path" size="35" placeholder="/media/flv/video2"><button onclick="connect()">Connect</button></div>
 <img id="m" src="/live.mjpg" alt="loading..."><pre id="s">connecting...</pre>
 <script>
-let presets={{ presets|tojson }};let p=document.getElementById('preset');let path=document.getElementById('path');
-for(const [name,val] of Object.entries(presets)){let o=document.createElement('option');o.textContent=name;o.value=val;p.appendChild(o)}
-p.value={{ default_path|tojson }};path.value=p.value;p.onchange=()=>path.value=p.value;
-async function connect(){let v=path.value.trim();if(!v.startsWith('/')){alert('Path must start with /');return}let r=await fetch('/switch?path='+encodeURIComponent(v));let j=await r.json();if(!j.ok)alert(j.error);else document.getElementById('m').src='/live.mjpg?t='+Date.now()}
+let presets={{ presets|tojson }};let p=document.getElementById('preset');let path=document.getElementById('path');let port=document.getElementById('port');
+for(const [name,val] of Object.entries(presets)){let o=document.createElement('option');o.textContent=name;o.value=JSON.stringify(val);p.appendChild(o)}
+p.value=JSON.stringify([{{ default_port }},{{ default_path|tojson }}]);let d=JSON.parse(p.value);port.value=d[0];path.value=d[1];p.onchange=()=>{let d=JSON.parse(p.value);port.value=d[0];path.value=d[1]};
+async function connect(){let v=path.value.trim(),po=parseInt(port.value);if(!v.startsWith('/')){alert('Path must start with /');return}let r=await fetch('/switch?port='+po+'&path='+encodeURIComponent(v));let j=await r.json();if(!j.ok)alert(j.error);else document.getElementById('m').src='/live.mjpg?t='+Date.now()}
 async function st(){try{let r=await fetch('/status');document.getElementById('s').textContent=JSON.stringify(await r.json(),null,2)}catch(e){}}setInterval(st,1000);st();
 </script></body></html>'''
 
@@ -78,8 +73,8 @@ def md5(v):
     return hashlib.md5(v.encode()).hexdigest()
 
 
-def make_url(path):
-    return f"ws://{HOST}:{PORT}{path}"
+def make_url(port, path):
+    return f"ws://{HOST}:{port}{path}"
 
 
 def parse_challenge(text):
@@ -100,19 +95,22 @@ def make_digest(uri, realm, nonce, qop):
             f'nc="{nc}", cnonce="{cnonce}"')
 
 
-def reset_state(path):
+def reset_state(port, path):
     global parser_buffer, stream_prefix
     with parser_lock:
         parser_buffer = bytearray()
         stream_prefix = bytearray()
-    for k in ("connected", "authenticated", "packets", "bytes", "flv_bytes", "video_tags", "keyframes", "audio_tags", "decoded_frames"):
-        state[k] = False if k in ("connected", "authenticated") else 0
-    state.update({"last_packet":"", "last_error":"", "challenge":"", "player":"starting",
-                  "flv_header_ok":False, "ffmpeg":"starting", "path":path, "url":make_url(path)})
+    for k in ("packets", "bytes", "flv_bytes", "video_tags", "keyframes", "audio_tags", "decoded_frames"):
+        state[k] = 0
+    state.update({"connected": False, "authenticated": False, "last_packet":"", "last_error":"", "challenge":"",
+                  "player":"starting", "flv_header_ok":False, "ffmpeg":"starting", "path":path, "port":port,
+                  "url":make_url(port,path)})
 
 
-def get_challenge(ws_url):
-    ws = websocket.create_connection(ws_url, origin=f"http://{HOST}:{PORT}", timeout=10)
+def get_challenge(ws_url, port):
+    # Camera 2's WebSocket implementation advertises/uses compression differently.
+    # Disable permessage-deflate so websocket-client does not try to decode RSV1 frames.
+    ws = websocket.create_connection(ws_url, origin=f"http://{HOST}:{port}", timeout=10, compression=None)
     state["connected"] = True
     msg = ws.recv(); ws.close()
     if isinstance(msg, bytes):
@@ -124,8 +122,8 @@ def get_challenge(ws_url):
     return parse_challenge(data["detail"])
 
 
-def open_authenticated(ws_url, auth):
-    return websocket.create_connection(ws_url, origin=f"http://{HOST}:{PORT}", timeout=15, header=[
+def open_authenticated(ws_url, port, auth):
+    return websocket.create_connection(ws_url, origin=f"http://{HOST}:{port}", timeout=15, compression=None, header=[
         "Pragma: no-cache", "Cache-Control: no-cache",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151 Safari/537.36",
         "Cookie: langInfo_=1; noShowTip=1; Authorization=" + auth,
@@ -205,12 +203,15 @@ def feed_ffmpeg(packet):
         except Exception as e:state["last_error"]=f"FFmpeg stdin: {e}"
 
 
-def stream_loop(path):
+def stream_loop(port, path):
     if not PASSWORD:state["last_error"]="CAMERA_PASSWORD is not set";return
     threading.Thread(target=ffmpeg_loop,daemon=True).start()
     ws=None
     try:
-        ws_url=make_url(path);realm,nonce,qop=get_challenge(ws_url);ws=open_authenticated(ws_url,make_digest(ws_url,realm,nonce,qop));state["authenticated"]=True;first=True
+        ws_url=make_url(port,path)
+        realm,nonce,qop=get_challenge(ws_url,port)
+        ws=open_authenticated(ws_url,port,make_digest(ws_url,realm,nonce,qop))
+        state["authenticated"]=True;first=True
         while not stop_event.is_set():
             packet=ws.recv()
             if packet is None:raise RuntimeError("WebSocket closed")
@@ -245,14 +246,14 @@ def stop_current():
     stop_event.clear()
 
 
-def start_stream(path):
+def start_stream(port, path):
     global stream_thread
-    stop_current();reset_state(path)
-    stream_thread=threading.Thread(target=stream_loop,args=(path,),daemon=True);stream_thread.start()
+    stop_current();reset_state(port,path)
+    stream_thread=threading.Thread(target=stream_loop,args=(port,path),daemon=True);stream_thread.start()
 
 
 @app.get('/')
-def index():return render_template_string(PAGE,presets=PRESETS,default_path=DEFAULT_PATH)
+def index():return render_template_string(PAGE,presets=PRESETS,default_path=DEFAULT_PATH,default_port=DEFAULT_PORT)
 
 @app.get('/status')
 def status():
@@ -262,8 +263,11 @@ def status():
 @app.get('/switch')
 def switch():
     path=request.args.get('path','').strip()
+    try:port=int(request.args.get('port',str(DEFAULT_PORT)))
+    except ValueError:return jsonify(ok=False,error='Invalid port'),400
+    if not (1<=port<=65535):return jsonify(ok=False,error='Invalid port'),400
     if not path.startswith('/') or len(path)>200:return jsonify(ok=False,error='Invalid path'),400
-    start_stream(path);return jsonify(ok=True,path=path,url=make_url(path))
+    start_stream(port,path);return jsonify(ok=True,path=path,port=port,url=make_url(port,path))
 
 @app.get('/live.flv')
 def live_flv():
@@ -310,7 +314,7 @@ def live_mjpg():
 
 def main():
     print('='*70);print('Uniview Multi-Camera / Multi-Stream Viewer');print('='*70)
-    start_stream(DEFAULT_PATH)
+    start_stream(DEFAULT_PORT,DEFAULT_PATH)
     url=f'http://127.0.0.1:{LOCAL_PORT}/';threading.Timer(1.0,lambda:webbrowser.open(url)).start();app.run(host='127.0.0.1',port=LOCAL_PORT,debug=False,threaded=True)
 
 if __name__=='__main__':main()
