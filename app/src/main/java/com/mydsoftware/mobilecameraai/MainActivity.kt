@@ -85,16 +85,13 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             status = "نام کاربری و رمز دوربین را وارد کنید"
             return
         }
-
         val user = Uri.encode(username)
         val pass = Uri.encode(password)
         val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
         status = "در حال اتصال RTSP..."
         player.stop()
         player.clearMediaItems()
-
-        val mediaSource = RtspMediaSource.Factory()
-            .setForceUseRtpTcp(true)
+        val mediaSource = RtspMediaSource.Factory().setForceUseRtpTcp(true)
             .createMediaSource(MediaItem.fromUri(rtspUri))
         player.setMediaSource(mediaSource)
         player.prepare()
@@ -109,7 +106,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
                 if (state == Player.STATE_ENDED) status = "پخش پایان یافت"
             }
             override fun onPlayerError(error: PlaybackException) {
-                val cause = generateSequence<Throwable>(error) { it.cause }.toList().joinToString(" → ") {
+                val cause = generateSequence<Throwable>(error) { it.cause }.joinToString(" → ") {
                     "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
                 }
                 status = "🔴 ${error.errorCodeName}\n$cause"
@@ -123,7 +120,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         Text("${camera.name} • RTSP ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
         AndroidView(
-            factory = { PlayerView(it).apply { player = this@let.player; useController = true } },
+            factory = { ctx -> PlayerView(ctx).apply { player = this@CameraPlayer.player; useController = true } },
             modifier = Modifier.fillMaxWidth().height(240.dp)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
