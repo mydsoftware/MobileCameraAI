@@ -56,10 +56,7 @@ private fun MobileCameraAIApp() {
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.fillMaxSize().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("MobileCameraAI", style = MaterialTheme.typography.headlineSmall)
                 Text("Uniview RTSP Live")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -89,13 +86,9 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
             return
         }
 
-        // Keep credentials out of the RTSP URI. Media3 performs RTSP authentication
-        // through the URI's user-info; encode each component exactly once.
         val user = Uri.encode(username)
         val pass = Uri.encode(password)
-        val path = camera.rtspPath(stream)
-        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}$path"
-
+        val rtspUri = "rtsp://$user:$pass@${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}"
         status = "در حال اتصال RTSP..."
         player.stop()
         player.clearMediaItems()
@@ -103,7 +96,6 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         val mediaSource = RtspMediaSource.Factory()
             .setForceUseRtpTcp(true)
             .createMediaSource(MediaItem.fromUri(rtspUri))
-
         player.setMediaSource(mediaSource)
         player.prepare()
         player.playWhenReady = true
@@ -112,29 +104,26 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
     DisposableEffect(camera.name, stream) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                status = when (state) {
-                    Player.STATE_BUFFERING -> "در حال دریافت تصویر..."
-                    Player.STATE_READY -> "🟢 LIVE"
-                    Player.STATE_ENDED -> "پخش پایان یافت"
-                    else -> status
-                }
+                if (state == Player.STATE_BUFFERING) status = "در حال دریافت تصویر..."
+                if (state == Player.STATE_READY) status = "🟢 LIVE"
+                if (state == Player.STATE_ENDED) status = "پخش پایان یافت"
             }
             override fun onPlayerError(error: PlaybackException) {
-                status = "🔴 ${error.errorCodeName}: ${error.message ?: "RTSP error"}"
+                val cause = generateSequence<Throwable>(error) { it.cause }.toList().joinToString(" → ") {
+                    "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
+                }
+                status = "🔴 ${error.errorCodeName}\n$cause"
             }
         }
         player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            player.release()
-        }
+        onDispose { player.removeListener(listener); player.release() }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text("${camera.name} • RTSP ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
         AndroidView(
-            factory = { PlayerView(it).apply { this.player = player; useController = true } },
+            factory = { PlayerView(it).apply { player = this@let.player; useController = true } },
             modifier = Modifier.fillMaxWidth().height(240.dp)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
