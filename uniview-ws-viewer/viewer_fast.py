@@ -60,7 +60,10 @@ def make_auth(uri, realm, nonce, qop):
 def open_ws():
     global ws
     url = f"ws://{HOST}:{PORT}{PATH}"
-    challenge_ws = websocket.create_connection(url, origin=f"http://{HOST}:{PORT}", timeout=8, compression=None)
+    challenge_ws = websocket.create_connection(
+        url, origin=f"http://{HOST}:{PORT}", timeout=8, compression=None,
+        header=["User-Agent: Mozilla/5.0 Chrome/151 Safari/537.36"]
+    )
     try:
         first = challenge_ws.recv()
         if isinstance(first, bytes):
@@ -68,12 +71,23 @@ def open_ws():
         realm, nonce, qop = digest_challenge(first)
     finally:
         challenge_ws.close()
+
     auth = make_auth(url, realm, nonce, qop)
+    # Uniview's WebSocket endpoint accepts the Digest value through its
+    # Authorization cookie. This is the form used by the working viewer.
     ws = websocket.create_connection(
-        url, origin=f"http://{HOST}:{PORT}", timeout=20, compression=None,
-        header=["User-Agent: Mozilla/5.0", "Cache-Control: no-cache", "Authorization: " + auth]
+        url,
+        origin=f"http://{HOST}:{PORT}",
+        timeout=20,
+        compression=None,
+        header=[
+            "Pragma: no-cache",
+            "Cache-Control: no-cache",
+            "User-Agent: Mozilla/5.0 Chrome/151 Safari/537.36",
+            "Cookie: langInfo_=1; noShowTip=1; Authorization=" + auth,
+        ],
     )
-    state.update(connected=True, authenticated=True)
+    state.update(connected=True, authenticated=True, last_error="")
     return ws
 
 
@@ -90,13 +104,19 @@ def broadcast(data):
                 clients.remove(c)
 
 
+def ffmpeg_errors():
+    while proc and proc.poll() is None:
+        line = proc.stderr.readline()
+        if line:
+            state["last_error"] = line.decode("utf-8", "replace").strip()[-1000:]
+
+
 def ffmpeg_loop():
     global proc
     binary = shutil.which("ffmpeg")
     if not binary:
         state.update(ffmpeg="missing", last_error="ffmpeg not found")
         return
-    # Low-latency MJPEG: reduce JPEG work, cap FPS, scale only when needed.
     vf = f"fps={FPS},scale='min({WIDTH},iw)':-2:force_original_aspect_ratio=decrease"
     cmd = [binary, "-hide_banner", "-loglevel", "warning",
            "-fflags", "nobuffer+genpts", "-flags", "low_delay",
@@ -115,13 +135,6 @@ def ffmpeg_loop():
             broadcast(data)
     except Exception as e:
         state.update(ffmpeg="error", last_error=repr(e))
-
-
-def ffmpeg_errors():
-    while proc and proc.poll() is None:
-        line = proc.stderr.readline()
-        if line:
-            state["last_error"] = line.decode("utf-8", "replace").strip()[-1000:]
 
 
 def feed(data):
@@ -167,7 +180,6 @@ class Client:
         self.closed = False
 
     def push(self, data):
-        # Keep only the newest encoded chunk to prevent latency buildup.
         with self.cv:
             self.latest = data
             self.cv.notify()
@@ -188,22 +200,16 @@ class Client:
 
 @app.get("/")
 def index():
-    return f'''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Uniview Fast Live</title><style>body{{margin:0;background:#111;color:#eee;font-family:Arial;text-align:center}}img{{width:100%;height:auto;display:block;background:#000}}pre{{text-align:left;margin:8px;padding:8px;background:#222}}</style></head><body><h3>Uniview Fast Live</h3><img src="/live.mjpg"><pre id="s">loading...</pre><script>async function s(){{try{{let r=await fetch('/status');document.getElementById('s').textContent=JSON.stringify(await r.json(),null,2)}}catch(e){{}}}}setInterval(s,1000);s()</script></body></html>'''
+    return f'''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Uniview Fast Live</title><style>body{{margin:0;background:#111;color:#eee;font-family:Arial;text-align:center}}img{{width:100%;height:auto;display:block;background:#000}}pre{{text-align:left;margin:8px;padding:8px;background:#222}}</style></head><body><h3>Uniview Fast Live</h3><img src="/live.mjpg"><pre id="s">loading...</pre><script>async function s(){{try{{let r=await fetch('/status');document.getElementById('s').textContent=JSON.stringify(await r.json(),null,2)}}catch(e){{}}}}setInterval(s,1000);s();</script></body></html>'''
 
 
 @app.get("/status")
 def status():
-    with state_lock_dummy():
-        r = dict(state)
+    r = dict(state)
     with clients_lock:
         r["clients"] = len(clients)
     r.update({"host": HOST, "port": PORT, "path": PATH, "fps": FPS, "width": WIDTH, "quality": QUALITY})
     return jsonify(r)
-
-
-class state_lock_dummy:
-    def __enter__(self): return self
-    def __exit__(self, *args): return False
 
 
 @app.get("/live.mjpg")
