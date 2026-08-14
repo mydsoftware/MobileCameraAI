@@ -3,19 +3,20 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MobileCameraAI</title>
-<style>body{margin:0;background:#111;color:#fff;font-family:Arial,sans-serif;text-align:center}header{padding:14px;font-size:20px}button{padding:13px 22px;margin:6px;border:0;border-radius:8px;font-size:16px;cursor:pointer}.status{padding:8px;color:#bbb}iframe{width:100%;height:calc(100vh - 145px);border:0;background:#000}</style>
+<style>body{margin:0;background:#111;color:#fff;font-family:Arial,sans-serif;text-align:center}header{padding:16px;font-size:21px}a{display:inline-block;padding:14px 24px;margin:6px;background:#fff;color:#111;text-decoration:none;border-radius:9px;font-size:17px}iframe{width:100%;height:calc(100vh - 155px);border:0;background:#000;margin-top:8px}.status{padding:8px;color:#bbb}</style>
 </head>
 <body>
 <header>MobileCameraAI — Live Camera</header>
-<div><button type="button" id="cam1">دوربین ۱</button><button type="button" id="cam2">دوربین ۲</button></div>
-<div class="status" id="status">دوربین ۱ انتخاب شده</div>
-<iframe id="cam" allow="autoplay; fullscreen" allowfullscreen></iframe>
+<div>
+<a href="http://37.202.152.217:8001" target="_blank" rel="noopener">دوربین ۱</a>
+<a href="http://37.202.152.217:8002" target="_blank" rel="noopener">دوربین ۲</a>
+</div>
+<div class="status">برای تست، هر دکمه پنل وب همان دوربین را در یک تب جدید باز می‌کند.</div>
+<iframe id="cam" title="Camera"></iframe>
 <script>
-const urls={1:'http://37.202.152.217:8001',2:'http://37.202.152.217:8002'};
-const frame=document.getElementById('cam'); const status=document.getElementById('status');
-function openCam(n){frame.src='about:blank'; setTimeout(()=>{frame.src=urls[n]},50); status.textContent='دوربین '+n+' انتخاب شده';}
-document.getElementById('cam1').addEventListener('click',()=>openCam(1));
-document.getElementById('cam2').addEventListener('click',()=>openCam(2));
-openCam(1);
+const frame=document.getElementById('cam');
+function loadCamera(url){frame.src=url}
+loadCamera('http://37.202.152.217:8001');
 </script>
-</body></html>
+</body>
+</html>
