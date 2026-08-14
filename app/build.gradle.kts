@@ -12,8 +12,8 @@ android {
         applicationId = "com.mydsoftware.mobilecameraai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
     }
 
     buildFeatures { compose = true }
@@ -35,7 +35,4 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.3")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-ui:1.9.0")
-    implementation("androidx.media3:media3-datasource:1.8.0")
-    implementation("androidx.media3:media3-extractor:1.8.0")
-    implementation("org.java-websocket:Java-WebSocket:1.6.0")
 }
