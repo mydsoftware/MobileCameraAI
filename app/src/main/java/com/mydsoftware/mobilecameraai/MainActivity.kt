@@ -153,7 +153,7 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
                 if (state == Player.STATE_ENDED) status = "پخش پایان یافت"
             }
             override fun onPlayerError(error: PlaybackException) {
-                val cause = generateSequence<Throwable>(error).joinToString(" → ") {
+                val cause = generateSequence<Throwable>(error) { it.cause }.joinToString(" → ") {
                     "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
                 }
                 status = "🔴 ${error.errorCodeName}\n$cause"
