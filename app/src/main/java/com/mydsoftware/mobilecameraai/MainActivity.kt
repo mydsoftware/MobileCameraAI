@@ -32,7 +32,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 
 class MainActivity : ComponentActivity() {
@@ -42,8 +42,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Camera 1 was validated previously through ONVIF: RTSP service is on 8554.
-// The camera reports media/video1, media/video2 and media/video3 style URIs.
 private val cameras = listOf(
     CameraConfig("Camera 1", "37.202.152.217", 8554, "/media"),
     CameraConfig("Camera 2", "37.202.152.217", 8554, "/media2")
