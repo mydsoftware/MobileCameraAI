@@ -10,12 +10,20 @@ import org.java_websocket.drafts.Draft_6455
 import org.java_websocket.handshake.ServerHandshake
 import org.json.JSONObject
 import java.net.URI
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
-class UniviewWsDataSource(private val host: String, private val port: Int, private val path: String, private val username: String, private val password: String, transferListener: TransferListener? = null) : BaseDataSource(false) {
+class UniviewWsDataSource(
+    private val host: String,
+    private val port: Int,
+    private val path: String,
+    private val username: String,
+    private val password: String,
+    transferListener: TransferListener? = null
+) : BaseDataSource(false) {
     private val mediaQueue = LinkedBlockingQueue<ByteArray>()
     private val textQueue = LinkedBlockingQueue<String>()
     private var socket: WebSocketClient? = null
@@ -58,7 +66,12 @@ class UniviewWsDataSource(private val host: String, private val port: Int, priva
     private fun newClient(auth: String?): WebSocketClient = object : WebSocketClient(URI(uri), Draft_6455(Collections.emptyList())) {
         override fun onOpen(handshakedata: ServerHandshake?) {}
         override fun onMessage(message: String?) { if (!message.isNullOrBlank()) textQueue.offer(message) }
-        override fun onMessage(bytes: ByteArray?) { if (bytes != null && bytes.isNotEmpty()) mediaQueue.offer(bytes) }
+        override fun onMessage(bytes: ByteBuffer?) {
+            if (bytes == null) return
+            val copy = ByteArray(bytes.remaining())
+            bytes.get(copy)
+            if (copy.isNotEmpty()) mediaQueue.offer(copy)
+        }
         override fun onClose(code: Int, reason: String?, remote: Boolean) {}
         override fun onError(ex: Exception?) { if (ex != null) textQueue.offer("ERROR:${ex.message}") }
     }.also {
