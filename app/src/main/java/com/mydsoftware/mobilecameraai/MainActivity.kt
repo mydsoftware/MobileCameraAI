@@ -120,7 +120,12 @@ private fun CameraPlayer(camera: CameraConfig, stream: Int, username: String, pa
         Text("${camera.name} • RTSP ${camera.host}:${camera.rtspPort}${camera.rtspPath(stream)}")
         Text(status)
         AndroidView(
-            factory = { ctx -> PlayerView(ctx).apply { player = this@CameraPlayer.player; useController = true } },
+            factory = { ctx ->
+                PlayerView(ctx).also { view ->
+                    view.player = player
+                    view.useController = true
+                }
+            },
             modifier = Modifier.fillMaxWidth().height(240.dp)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
